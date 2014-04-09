@@ -194,22 +194,40 @@ func decode_connect(buff []byte) *MqttConnect {
 	for getByte(dump)&128 != 0 {
 	}
 
-	// protocol len
-	msb := getByte(dump)
-	lsb := getByte(dump)
-
-	pLen := (uint16(msb) << 8) | uint16(lsb)
-
-	fmt.Printf("pLen: %d %d %d\n", pLen, msb, lsb)
-
-	cnxMsg.ProtocolName = string(dump.Next(int(pLen)))
+	cnxMsg.ProtocolName = decode_string(dump)
 
 	cnxMsg.Version = getByte(dump)
 
 	cnxMsg.Flags = getByte(dump)
 
 	cnxMsg.KeepAlive = uint16(getByte(dump))<<8 | uint16(getByte(dump))
+
+	cnxMsg.ClientId = decode_string(dump)
+
+	if cnxMsg.isWillFlag() {
+		// will topic
+		cnxMsg.WillTopic = decode_string(dump)
+		// will mesage
+		cnxMsg.WillMsg = decode_string(dump)
+	}
+
+	if cnxMsg.isUserFlag() {
+		cnxMsg.Username = decode_string(dump)
+	}
+	if cnxMsg.isPasswordFlag() {
+		cnxMsg.Password = decode_string(dump)
+	}
+
 	return &cnxMsg
+}
+
+func decode_string(buff *bytes.Buffer) string {
+	msb := getByte(buff)
+	lsb := getByte(buff)
+
+	pLen := (uint16(msb) << 8) | uint16(lsb)
+
+	return string(buff.Next(int(pLen)))
 }
 
 type MqttConnect struct {
@@ -217,4 +235,21 @@ type MqttConnect struct {
 	Version      byte
 	Flags        byte
 	KeepAlive    uint16
+	ClientId     string
+	Username     string
+	Password     string
+	WillTopic    string
+	WillMsg      string
+}
+
+func (cnx *MqttConnect) isWillFlag() bool {
+	return cnx.Flags&0x04 > 0
+}
+
+func (cnx *MqttConnect) isUserFlag() bool {
+	return cnx.Flags&0x80 > 0
+}
+
+func (cnx *MqttConnect) isPasswordFlag() bool {
+	return cnx.Flags&0x40 > 0
 }
