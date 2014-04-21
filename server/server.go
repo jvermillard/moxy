@@ -46,19 +46,42 @@ func serve(conn net.Conn, server string) {
 	}
 	defer rConn.Close()
 
-	go proxifyStream(conn, rConn, func(b *bytes.Buffer) {
+	//  reverse proxifying
+	go proxifyStream(rConn, conn, func(b *bytes.Buffer) {
+		fmt.Print("RCVD: ")
+		dumpMqttPdu(b)
+	})
+
+	proxifyStream(conn, rConn, func(b *bytes.Buffer) {
 		fmt.Print("SENT: ")
 		dumpMqttPdu(b)
 	})
 
-	//  reverse proxifying
-	proxifyStream(rConn, conn, func(b *bytes.Buffer) {
-		fmt.Print("RCVD: ")
-		dumpMqttPdu(b)
-	})
+	err = conn.Close()
+	//err = rConn.Close()
+
+}
+
+func eofOrPanic(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if err == io.EOF {
+		return true
+	}
+
+	panic(err)
 }
 
 func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer)) {
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in f", r)
+		}
+	}()
+
 	r := bufio.NewReader(reader)
 	w := bufio.NewWriter(writer)
 	for {
@@ -66,8 +89,8 @@ func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer
 		buff := new(bytes.Buffer)
 		header, err := r.ReadByte()
 
-		if err != nil {
-			panic(err)
+		if eofOrPanic(err) {
+			break
 		}
 
 		buff.WriteByte(header)
@@ -78,11 +101,11 @@ func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer
 
 		for {
 			b, err := r.ReadByte()
-			buff.WriteByte(b)
-
-			if err != nil {
-				panic(err)
+			if eofOrPanic(err) {
+				break
 			}
+
+			buff.WriteByte(b)
 
 			length += (int(b) & 127) * multiplier
 			multiplier *= 128
@@ -93,27 +116,33 @@ func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer
 
 		// now consume remaining length bytes
 		_, err = io.CopyN(buff, r, int64(length))
-		if err != nil {
-			panic(err)
+		if eofOrPanic(err) {
+			break
 		}
 
 		// now push the PDU to the remote connection
 		dumper(buff)
 
 		count, err := buff.WriteTo(w)
+		if eofOrPanic(err) {
+			break
+		}
+
 		if err != nil {
 			panic(err)
 		}
 
 		err = w.Flush()
-		if err != nil {
-			panic(err)
+		if eofOrPanic(err) {
+			break
 		}
 
 		if debug {
 			fmt.Printf("Wrote %d bytes\n", count)
 		}
 	}
+
+	fmt.Println("EoF")
 }
 
 type MsgType byte
