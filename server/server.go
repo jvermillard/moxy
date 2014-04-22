@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"time"
+
+	"github.com/jvermillard/moxy/recorder"
 )
 
 var debug bool
 
-func StartServer(listen string, server string, isDebug bool) {
+func StartServer(listen string, server string, isDebug bool, isTrace bool) {
 	debug = isDebug
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
@@ -24,7 +28,7 @@ func StartServer(listen string, server string, isDebug bool) {
 			panic(err)
 		}
 
-		go serve(conn, server)
+		go serve(conn, server, isTrace)
 	}
 }
 
@@ -33,12 +37,23 @@ const (
 )
 
 // serve a connected MQTT client
-func serve(conn net.Conn, server string) {
+func serve(conn net.Conn, server string, trace bool) {
 
 	if debug {
 		fmt.Printf("new connection: %v\n", conn.RemoteAddr())
 		fmt.Printf("Connecting to: %s\n", server)
 	}
+
+	var rec recorder.Recorder = nil
+	if trace {
+		var err error
+		name := strings.Replace(conn.RemoteAddr().String(), ":", "-", -1)
+		rec, err = recorder.NewFileRecorder(name + ".trace")
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	// first open a connection to the remote broker
 	rConn, err := net.Dial("tcp", server)
 	if err != nil {
@@ -50,12 +65,12 @@ func serve(conn net.Conn, server string) {
 	go proxifyStream(rConn, conn, func(b *bytes.Buffer) {
 		fmt.Print("RCVD: ")
 		dumpMqttPdu(b)
-	})
+	}, rec)
 
 	proxifyStream(conn, rConn, func(b *bytes.Buffer) {
 		fmt.Print("SENT: ")
 		dumpMqttPdu(b)
-	})
+	}, nil)
 
 	err = conn.Close()
 	//err = rConn.Close()
@@ -74,11 +89,14 @@ func eofOrPanic(err error) bool {
 	panic(err)
 }
 
-func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer)) {
+func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer), rec recorder.Recorder) {
 
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println("Recovered in f", r)
+		}
+		if rec != nil {
+			rec.Close()
 		}
 	}()
 
@@ -120,8 +138,15 @@ func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer
 			break
 		}
 
-		// now push the PDU to the remote connection
+		// print the PDU
 		dumper(buff)
+
+		// record the PDU
+		if rec != nil {
+			rec.SaveMessage(recorder.NewMqttMessage(time.Now().UnixNano(), buff.Bytes()))
+		}
+
+		// now push the PDU to the remote connection
 
 		count, err := buff.WriteTo(w)
 		if eofOrPanic(err) {
