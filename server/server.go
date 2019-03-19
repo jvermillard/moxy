@@ -65,11 +65,13 @@ func serve(conn net.Conn, server string, trace bool) {
 	go proxifyStream(rConn, conn, func(b *bytes.Buffer) {
 		fmt.Print("RCVD: ")
 		dumpMqttPdu(b)
+
 	}, rec)
 
 	proxifyStream(conn, rConn, func(b *bytes.Buffer) {
 		fmt.Print("SENT: ")
 		dumpMqttPdu(b)
+
 	}, nil)
 
 	err = conn.Close()
@@ -93,7 +95,9 @@ func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer
 
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println("Recovered in f", r)
+			if debug {
+				fmt.Println("Recovered in f", r)
+			}
 		}
 		if rec != nil {
 			rec.Close()
@@ -139,7 +143,9 @@ func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer
 		}
 
 		// print the PDU
-		dumper(buff)
+		if debug {
+			dumper(buff)
+		}
 
 		// record the PDU
 		if rec != nil {
@@ -167,7 +173,10 @@ func proxifyStream(reader io.Reader, writer io.Writer, dumper func(*bytes.Buffer
 		}
 	}
 
-	fmt.Println("EoF")
+	if debug {
+		fmt.Println("EoF")
+	}
+
 }
 
 type MsgType byte
